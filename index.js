@@ -4,12 +4,42 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 const dotenv = require("dotenv");
-var jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
+
 dotenv.config();
 
 // Middleware
-app.use(cors());
+app.use(
+	cors({
+		origin: ["http://localhost:5173"], // client side link
+		credentials: true, // allow cookies
+	}),
+);
 app.use(express.json());
+app.use(cookieParser());
+
+const logger = (req, res, next) => {
+	console.log("inside the logger middleware");
+	next();
+};
+
+const verifyToken = (req, res, next) => {
+	const token = req?.cookies?.token;
+	console.log("cookie in the middleware", token);
+	if (!token) {
+		return res.status(401).send({ message: "Unauthorized Access" });
+	}
+	// verify token
+	jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+		if (err) {
+			return res.status(401).send({ message: "Unauthorized Access" });
+		}
+
+		req.decoded = decoded;
+		next();
+	});
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@devcluster.s7bmtla.mongodb.net/?retryWrites=true&w=majority&appName=DevCluster`;
 
@@ -31,7 +61,23 @@ async function run() {
 		const jobsCollection = careerCodeDB.collection("jobs");
 		const applicationsCollection = careerCodeDB.collection("applications");
 
-	
+		// JWT Related API
+		app.post("/jwt", async (req, res) => {
+			const userData = req.body;
+
+			// generate token
+			const token = jwt.sign(userData, process.env.JWT_SECRET, {
+				expiresIn: "1d",
+			});
+
+			// set token in the cookies
+			res.cookie("token", token, {
+				httpOnly: true,
+				secure: false,
+			});
+
+			res.send({ success: true });
+		});
 
 		// Get all jobs
 		app.get("/jobs", async (req, res) => {
@@ -100,8 +146,12 @@ async function run() {
 		});
 
 		// Get applications by email
-		app.get("/applications", async (req, res) => {
+		app.get("/applications", logger, verifyToken, async (req, res) => {
 			const email = req.query.email;
+			// console.log("inside applications api", req.cookies);
+			if (email !== req.decoded.email) {
+				return res.status(403).send({ message: "Forbidden Access!" });
+			}
 			const query = {
 				applicant: email,
 			};
